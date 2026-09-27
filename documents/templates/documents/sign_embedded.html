@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Sign · {{ document.name }} · Yagree{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Sign document</h1>
+        <p>You're about to complete signing on SignYu's secure page.</p>
+    </div>
+    <a href="{% url 'documents:document_detail' document.pk %}" class="btn btn-secondary">Back</a>
+</div>
+
+<div class="card sign-handoff-card">
+    <div class="sign-handoff-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2L4 6v6c0 5 3.4 8.6 8 10 4.6-1.4 8-5 8-10V6l-8-4z" stroke="#4C5FD9" stroke-width="1.6" stroke-linejoin="round"/>
+            <path d="M9 12l2 2 4-4" stroke="#4C5FD9" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+    </div>
+
+    <h2 class="sign-handoff-title">{{ document.name }}</h2>
+    <p class="sign-handoff-sub">Signing as <strong>{{ signer.name }}</strong> ({{ signer.email }})</p>
+
+    <div class="sign-handoff-divider"></div>
+
+    <p class="sign-handoff-note">
+      
+    </p>
+
+    <a href="{{ signer.sign_url }}" target="_blank" rel="noopener" class="btn btn-primary sign-handoff-cta">
+        Continue to Secure Signing →
+    </a>
+
+    <p class="sign-handoff-help">
+        Already signed? <a href="{% url 'documents:document_detail' document.pk %}">Go back and check status</a>.
+    </p>
+</div>
+{% endblock %}

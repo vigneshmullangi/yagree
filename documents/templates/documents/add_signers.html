@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Add Signers · Yagree{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Add signers</h1>
+        <p>Add the people who need to sign "{{ document.name }}" (up to 6).</p>
+    </div>
+</div>
+
+<div class="card">
+    <form method="post">
+        {% csrf_token %}
+        {{ formset.management_form }}
+        {% if formset.non_form_errors %}
+            <div class="form-errors">{{ formset.non_form_errors }}</div>
+        {% endif %}
+        <div class="signer-row" style="border-bottom:2px solid var(--border); padding-top:0;">
+            <div class="form-label">Name</div>
+            <div class="form-label">Email</div>
+            <div class="form-label">Phone</div>
+            <div class="form-label">Order</div>
+            <div></div>
+        </div>
+        {% for form in formset %}
+        <div class="signer-row">
+            {{ form.id }}
+            <div>
+                {{ form.name }}
+                {% if form.name.errors %}<div class="form-errors">{{ form.name.errors|striptags }}</div>{% endif %}
+            </div>
+            <div>
+                {{ form.email }}
+                {% if form.email.errors %}<div class="form-errors">{{ form.email.errors|striptags }}</div>{% endif %}
+            </div>
+            <div>{{ form.phone }}</div>
+            <div>{{ form.signing_order }}</div>
+            <div>
+                {% if form.instance.pk %}
+                <label class="muted" style="font-size:12px;">{{ form.DELETE }} Remove</label>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+
+        <div class="btn-row">
+            <a href="{% url 'documents:document_detail' document.pk %}" class="btn btn-secondary">Back</a>
+            {% if formset.forms|length < formset.max_num %}
+            <button type="submit" name="action" value="add_row" class="btn btn-secondary">+ Add another signer</button>
+            {% endif %}
+            <button type="submit" name="action" value="continue" class="btn btn-primary">Continue</button>
+        </div>
+        <div class="form-help mt-24">Up to {{ formset.max_num }} signers per document.</div>
+    </form>
+</div>
+{% endblock %}

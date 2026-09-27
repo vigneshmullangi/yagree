@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}{{ document.name }} · Yagree{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>{{ document.name }}</h1>
+        <p><span class="badge badge-{{ document.status }}">{{ document.get_status_display }}</span></p>
+    </div>
+    <div class="btn-row" style="margin-top:0;">
+        {% if document.status == 'DRAFT' %}
+            <a href="{% url 'documents:add_signers' document.pk %}" class="btn btn-secondary">Edit signers</a>
+            <a href="{% url 'documents:review_send' document.pk %}" class="btn btn-primary">Send</a>
+        {% elif document.status == 'SENT' or document.status == 'PARTIALLY_SIGNED' %}
+            <form method="post" action="{% url 'documents:sync_status' document.pk %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-secondary">Check status now</button>
+            </form>
+        {% elif document.status == 'COMPLETED' %}
+            <a href="{% url 'documents:download_document' document.pk %}" class="btn btn-primary">Download Signed PDF</a>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <div class="detail-grid">
+        <div class="detail-item"><div class="label">Created</div><div class="value">{{ document.created_at|date:"d M Y, H:i" }}</div></div>
+        <div class="detail-item"><div class="label">Sent</div><div class="value">{{ document.sent_at|date:"d M Y, H:i"|default:"—" }}</div></div>
+        <div class="detail-item"><div class="label">Completed</div><div class="value">{{ document.completed_at|date:"d M Y, H:i"|default:"—" }}</div></div>
+    </div>
+
+    <div class="card-title">Signer progress — {{ document.signed_count }} / {{ document.signer_count }} signed</div>
+    <div class="progress-track"><div class="progress-fill" style="width:{% widthratio document.signed_count document.signer_count 100 %}%;"></div></div>
+
+    <table class="mt-24">
+        <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Status</th><th>Signed at</th><th></th></tr></thead>
+        <tbody>
+        {% for s in signers %}
+            <tr>
+                <td>{{ forloop.counter }}</td>
+                <td>{{ s.name }}</td>
+                <td>{{ s.email }}</td>
+                <td><span class="badge badge-{{ s.status }}">{{ s.get_status_display }}</span></td>
+                <td>{{ s.signed_at|date:"d M Y, H:i"|default:"—" }}</td>
+                <td>
+                    {% if s.status == 'PENDING' and s.sign_url %}
+                    <a href="{% url 'documents:sign_embedded' document.pk s.pk %}" class="btn btn-secondary btn-sm">Sign</a>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <div class="card-title">Activity</div>
+    {% if activities %}
+    <ul style="list-style:none; padding:0; margin:0;">
+        {% for a in activities %}
+        <li style="padding:10px 0; border-bottom:1px solid var(--border); font-size:14px;">
+            <span class="muted" style="font-size:12px;">{{ a.created_at|date:"d M Y, H:i" }}</span><br>
+            {{ a.message }}
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <div class="muted">No activity yet.</div>
+    {% endif %}
+</div>
+{% endblock %}

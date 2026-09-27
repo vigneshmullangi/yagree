@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Yagree{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Welcome, {{ user.username }}</h1>
+        <p>Manage your documents and eSign requests.</p>
+    </div>
+    <a href="{% url 'documents:create_document' %}" class="btn btn-primary">+ Create Document</a>
+</div>
+
+<div class="stat-grid">
+    <div class="stat-card"><div class="stat-value">{{ stats.total }}</div><div class="stat-label">Total documents</div></div>
+    <div class="stat-card"><div class="stat-value">{{ stats.draft }}</div><div class="stat-label">Draft</div></div>
+    <div class="stat-card"><div class="stat-value">{{ stats.sent }}</div><div class="stat-label">Sent</div></div>
+    <div class="stat-card"><div class="stat-value">{{ stats.completed }}</div><div class="stat-label">Completed</div></div>
+</div>
+
+<div class="card">
+    <div class="card-title">Recent documents</div>
+    {% if documents %}
+    <table>
+        <thead>
+            <tr><th>Document</th><th>Status</th><th>Signers</th><th>Created</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for doc in documents %}
+            <tr>
+                <td>{{ doc.name }}</td>
+                <td><span class="badge badge-{{ doc.status }}">{{ doc.get_status_display }}</span></td>
+                <td>{{ doc.signed_count }} / {{ doc.signer_count }}</td>
+                <td>{{ doc.created_at|date:"d M Y" }}</td>
+                <td><a class="btn btn-secondary btn-sm" href="{% url 'documents:document_detail' doc.pk %}">View</a></td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        No documents yet. <a href="{% url 'documents:create_document' %}">Create your first document</a> to get started.
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

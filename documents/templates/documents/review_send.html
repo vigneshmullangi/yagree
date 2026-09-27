@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Review & Send · Yagree{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Review & send</h1>
+        <p>Please review the document and signers before sending.</p>
+    </div>
+</div>
+
+<div class="card" style="max-width:640px;">
+    <div class="card-title">Document</div>
+    <div style="font-weight:600; margin-bottom:4px;">{{ document.name }}</div>
+    <div class="muted" style="font-size:13px;">{{ document.original_file.name }}</div>
+
+    <div class="card-title mt-24">Signers ({{ signers.count }})</div>
+    <table>
+        <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Phone</th></tr></thead>
+        <tbody>
+        {% for s in signers %}
+            <tr>
+                <td>{{ forloop.counter }}</td>
+                <td>{{ s.name }}</td>
+                <td>{{ s.email }}</td>
+                <td>{{ s.phone|default:"—" }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <form method="post" onsubmit="return confirm('Send this document for signing?');">
+        {% csrf_token %}
+        <div class="btn-row">
+            <a href="{% url 'documents:add_signers' document.pk %}" class="btn btn-secondary">Back</a>
+            <button type="submit" class="btn btn-primary">Send for Signing</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

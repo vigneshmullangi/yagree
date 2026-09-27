@@ -1,0 +1,47 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Yagree{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+<body>
+{% if user.is_authenticated %}
+<div class="app-shell">
+    <aside class="sidebar">
+        <div class="brand">
+            <span class="brand-mark">Y</span>
+            <span class="brand-name">Yagree</span>
+        </div>
+        <nav class="side-nav">
+            <a href="{% url 'documents:dashboard' %}" class="{% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">Dashboard</a>
+            <a href="{% url 'documents:create_document' %}" class="{% if request.resolver_match.url_name == 'create_document' %}active{% endif %}">Create Document</a>
+        </nav>
+        <div class="side-footer">
+            <div class="user-chip">{{ user.username|slice:":1"|upper }}</div>
+            <div class="user-meta">
+                <div class="user-name">{{ user.username }}</div>
+                <a href="{% url 'accounts:logout' %}" class="logout-link">Sign out</a>
+            </div>
+        </div>
+    </aside>
+    <main class="main-area">
+        {% if messages %}
+        <div class="flash-stack">
+            {% for message in messages %}
+            <div class="flash flash-{{ message.tags }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% block content %}{% endblock %}
+    </main>
+</div>
+{% else %}
+    {% block auth_content %}{% endblock %}
+{% endif %}
+</body>
+</html>

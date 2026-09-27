@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Create Document · Yagree{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Create document</h1>
+        <p>Upload a PDF to start the eSign process.</p>
+    </div>
+</div>
+
+<div class="card" style="max-width:560px;">
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <div class="form-group">
+            <label class="form-label">Document name</label>
+            {{ form.name }}
+            {% if form.name.errors %}<div class="form-errors">{{ form.name.errors|striptags }}</div>{% endif %}
+        </div>
+        <div class="form-group">
+            <label class="form-label">Upload PDF</label>
+            {{ form.original_file }}
+            <div class="form-help">Max file size 10 MB, PDF only.</div>
+            {% if form.original_file.errors %}<div class="form-errors">{{ form.original_file.errors|striptags }}</div>{% endif %}
+        </div>
+        <div class="btn-row">
+            <a href="{% url 'documents:dashboard' %}" class="btn btn-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary">Continue</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
