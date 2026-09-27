@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Yagree
 
 Django e-signature middleware in front of the SignYu API.
@@ -82,3 +83,6 @@ through Section 38 of your own spec (the numbered test list) once your
 `.env` is filled in — start with **Create Document**, since that's where
 the one unconfirmed assumption (#2 above) will surface immediately as a
 clear 4xx from SignYu if it's wrong, rather than a silent failure.
+=======
+# yagree
+>>>>>>> d7070200b6c2143f97e015b567f7c8a8dd3813b4
