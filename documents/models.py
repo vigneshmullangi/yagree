@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 import uuid
 
 from django.conf import settings
@@ -12,6 +14,48 @@ def signed_upload_path(instance, filename):
     return f"documents/{instance.id}/signed/{filename}"
 
 
+class APIClient(models.Model):
+    """
+    An external system (e.g. the HRMS) that calls Yagree's /api/v1/ endpoints.
+    Only a SHA-256 hash of the API key is stored, so the key is shown once
+    when created (see `manage.py create_api_client`) and cannot be recovered.
+    The webhook secret has to be kept in plain text because Yagree uses it
+    to sign the events it sends to the client's webhook_url.
+    """
+
+    name = models.CharField(max_length=100, unique=True)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="api_clients")
+    key_prefix = models.CharField(max_length=16, editable=False)
+    key_hash = models.CharField(max_length=64, unique=True, editable=False)
+    webhook_url = models.URLField(max_length=500, blank=True)
+    webhook_secret = models.CharField(max_length=64, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return self.name
+
+    @staticmethod
+    def hash_key(raw_key):
+        return hashlib.sha256(raw_key.encode()).hexdigest()
+
+    @staticmethod
+    def new_raw_key():
+        return "yg_live_" + secrets.token_urlsafe(32)
+
+    @classmethod
+    def generate(cls, **kwargs):
+        raw_key = cls.new_raw_key()
+        client = cls.objects.create(
+            key_prefix=raw_key[:12],
+            key_hash=cls.hash_key(raw_key),
+            webhook_secret=secrets.token_hex(32),
+            **kwargs,
+        )
+        return client, raw_key
+
+
 class Document(models.Model):
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
@@ -24,6 +68,12 @@ class Document(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="documents")
+    # Set only for documents created through the API (e.g. by the HRMS).
+    # external_ref is the caller's own ID for this document (offer ID etc.)
+    # and is unique per client, which also makes create requests idempotent.
+    api_client = models.ForeignKey(APIClient, null=True, blank=True, on_delete=models.SET_NULL, related_name="documents")
+    external_ref = models.CharField(max_length=100, blank=True, db_index=True)
+
     name = models.CharField(max_length=255)
     original_file = models.FileField(upload_to=document_upload_path)
     signed_file = models.FileField(upload_to=signed_upload_path, null=True, blank=True)
@@ -53,6 +103,7 @@ class Document(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        unique_together = [("api_client", "external_ref")]
 
     def __str__(self):
         return self.name
@@ -119,3 +170,26 @@ class ActivityLog(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class OutboundWebhookLog(models.Model):
+    """Every event Yagree sends to an API client's webhook, with the result."""
+
+    api_client = models.ForeignKey(APIClient, on_delete=models.CASCADE, related_name="webhook_logs")
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name="outbound_webhooks")
+    event = models.CharField(max_length=100)
+    event_id = models.UUIDField(default=uuid.uuid4, editable=False)
+    payload = models.JSONField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    success = models.BooleanField(default=False)
+    response_status = models.PositiveSmallIntegerField(null=True, blank=True)
+    response_body = models.TextField(blank=True)
+    error = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.event} -> {self.api_client.name} ({'ok' if self.success else 'failed'})"

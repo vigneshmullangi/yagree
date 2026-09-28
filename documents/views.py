@@ -3,18 +3,17 @@ import logging
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import FileResponse, HttpResponse, HttpResponseNotAllowed, JsonResponse
+from django.conf import settings
+from django.http import FileResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse
-from django.utils import timezone
-from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from .forms import CreateDocumentForm, SignerFormSet
 from .models import ActivityLog, Document, Signer, WebhookEvent
 from .services.signyu import SignYuAPIError, SignYuClient, SignYuConflictError
-from .services.status_map import map_document_status, map_signer_status
+from .services.status_map import map_document_status
+from .services.workflow import fetch_signed_pdf, send_document_to_signyu, sync_document
 
 logger = logging.getLogger(__name__)
 
@@ -166,34 +165,13 @@ def review_send(request, pk):
             messages.error(request, "This document has already been sent.")
             return redirect("documents:document_detail", pk=document.pk)
 
-        client = SignYuClient()
         try:
-            raw = client.send_document(document.signyu_document_id)
+            send_document_to_signyu(document)
         except SignYuAPIError as exc:
             logger.exception("SignYu send_document failed for %s", document.id)
             messages.error(request, _friendly_error(exc))
             return render(request, "documents/review_send.html", {"document": document, "signers": signers})
 
-        payload = client.extract_document_payload(raw)
-        document.signyu_send_response = raw
-        document.signyu_raw_status = payload.get("status", document.signyu_raw_status)
-        document.status = map_document_status(payload.get("status", "")) or Document.Status.SENT
-        document.sent_at = timezone.now()
-        document.save()
-
-        # CONFIRMED: the send response includes each signer's signUrl and
-        # signerId directly (not the add-signers response) - capture them
-        # here, matched back to our local rows by email.
-        returned_signers = payload.get("signers", [])
-        by_email = {s.get("email"): s for s in returned_signers if isinstance(s, dict) and s.get("email")}
-        for signer in signers:
-            match = by_email.get(signer.email)
-            if match:
-                signer.signyu_signer_id = match.get("signerId", signer.signyu_signer_id)
-                signer.sign_url = match.get("signUrl", signer.sign_url)
-                signer.save(update_fields=["signyu_signer_id", "sign_url"])
-
-        _log(document, "Document sent for signing")
         messages.success(request, "Document sent for signing.")
         return redirect("documents:document_detail", pk=document.pk)
 
@@ -248,49 +226,22 @@ def download_document(request, pk):
         messages.error(request, "This document is not completed yet.")
         return redirect("documents:document_detail", pk=document.pk)
 
-    if document.signed_file:
-        return FileResponse(document.signed_file.open("rb"), as_attachment=True, filename=f"{document.name}-signed.pdf")
-
-    client = SignYuClient()
-    from django.core.files.base import ContentFile
-
     try:
-        if document.signyu_download_url:
-            # CONFIRMED: real downloadUrl from GET /documents/{id}.
-            content = client.download_from_url(document.signyu_download_url)
-        else:
-            # Fallback to the earlier guessed endpoint if we somehow never
-            # captured a downloadUrl (e.g. completed via an old webhook
-            # payload that didn't include it).
-            content = client.download_document(document.signyu_document_id)
+        signed_file = fetch_signed_pdf(document)
     except SignYuAPIError as exc:
         logger.exception("SignYu download failed for %s", document.id)
         messages.error(request, _friendly_error(exc))
         return redirect("documents:document_detail", pk=document.pk)
 
-    document.signed_file.save(f"{document.name}-signed.pdf", ContentFile(content), save=True)
-    return FileResponse(document.signed_file.open("rb"), as_attachment=True, filename=f"{document.name}-signed.pdf")
+    return FileResponse(signed_file.open("rb"), as_attachment=True, filename=f"{document.name}-signed.pdf")
 
 
 @login_required
 @require_POST
 def sync_status(request, pk):
     """
-    Polls SignYu directly for the current status instead of waiting on a
-    webhook - useful for local development where SignYu has no way to
-    reach 127.0.0.1. No public URL required, since this is Yagree calling
-    out to SignYu, not the other way around.
-
-    CONFIRMED response shape from GET /documents/{id}:
-        {documentId, name, status, createdAt, updatedAt, completedAt,
-         downloadUrl, certificateUrl,
-         signers: [{signerId, name, email, phone, signingOrder,
-                     openedAt, signedAt, hasSigned, signUrl}]}
-    Note: there is no per-signer status string - only a `hasSigned`
-    boolean and `signedAt` timestamp. And the document-level `status`
-    only appears to say "SENT" even when some signers have already
-    signed - SignYu does not send an explicit "partially signed" value,
-    so Yagree derives PARTIALLY_SIGNED itself below.
+    Pulls the current status from SignYu on demand. Yagree calls out to
+    SignYu, so this works even where SignYu can't reach Yagree.
     """
     document = get_object_or_404(Document, pk=pk, owner=request.user)
 
@@ -298,94 +249,26 @@ def sync_status(request, pk):
         messages.error(request, "This document has no SignYu ID to check.")
         return redirect("documents:document_detail", pk=document.pk)
 
-    client = SignYuClient()
     try:
-        raw = client.get_document(document.signyu_document_id)
+        document, changed = sync_document(document)
     except SignYuAPIError as exc:
         logger.exception("SignYu get_document failed for %s", document.id)
         messages.error(request, _friendly_error(exc))
         return redirect("documents:document_detail", pk=document.pk)
 
-    payload = client.extract_document_payload(raw)
-
-    returned_signers = payload.get("signers", [])
-    by_email = {s.get("email"): s for s in returned_signers if isinstance(s, dict) and s.get("email")}
-    changed = False
-
-    for signer in document.signers.all():
-        match = by_email.get(signer.email)
-        if not match:
-            continue
-        if match.get("signerId") and not signer.signyu_signer_id:
-            signer.signyu_signer_id = match["signerId"]
-            signer.save(update_fields=["signyu_signer_id"])
-        if match.get("signUrl") and not signer.sign_url:
-            signer.sign_url = match["signUrl"]
-            signer.save(update_fields=["sign_url"])
-        if match.get("hasSigned") and signer.status != Signer.Status.SIGNED:
-            signer.status = Signer.Status.SIGNED
-            signer.signed_at = _parse_timestamp(match.get("signedAt")) or timezone.now()
-            signer.save()
-            _log(document, f"{signer.name} signed (checked manually)")
-            changed = True
-
-    document.signyu_download_url = payload.get("downloadUrl") or document.signyu_download_url
-    document.signyu_certificate_url = payload.get("certificateUrl") or document.signyu_certificate_url
-
-    signed_count = document.signers.filter(status=Signer.Status.SIGNED).count()
-    total = document.signers.count()
-
-    raw_status = payload.get("status", "")
-    mapped_doc_status = map_document_status(raw_status)
-
-    if mapped_doc_status == Document.Status.COMPLETED:
-        new_status = Document.Status.COMPLETED
-    elif total > 0 and signed_count == total:
-        # SignYu's own status string stayed "SENT" in testing even once
-        # every signer had signed - derive COMPLETED ourselves as a
-        # fallback in case a webhook/explicit status never arrives.
-        new_status = Document.Status.COMPLETED
-    elif total > 0 and signed_count > 0:
-        new_status = Document.Status.PARTIALLY_SIGNED
-    else:
-        new_status = mapped_doc_status or document.status
-
-    if new_status != document.status:
-        document.status = new_status
-        document.signyu_raw_status = raw_status
-        if new_status == Document.Status.COMPLETED and not document.completed_at:
-            document.completed_at = _parse_timestamp(payload.get("completedAt")) or timezone.now()
-            _log(document, "Document completed (checked manually)")
-        changed = True
-
-    document.save()
-
-    if changed:
-        messages.success(request, "Status updated from SignYu.")
-    else:
-        messages.success(request, "Checked SignYu - no changes yet.")
+    messages.success(request, "Status updated from SignYu." if changed else "Checked SignYu - no changes yet.")
     return redirect("documents:document_detail", pk=document.pk)
-
-
-def _parse_timestamp(value):
-    if not value:
-        return None
-    parsed = parse_datetime(value)
-    if parsed and timezone.is_naive(parsed):
-        parsed = timezone.make_aware(parsed)
-    return parsed
 
 
 @csrf_exempt
 @require_POST
 def signyu_webhook(request):
     """
-    Receives SignYu webhook events. The exact payload shape is NOT
-    confirmed - this handler stores the raw payload unconditionally
-    (so nothing is ever lost), then makes a best-effort attempt to
-    locate the document/signer and update statuses using several
-    plausible key names. Once the real payload is known, tighten the
-    key lookups below.
+    Inbound webhook from SignYu. The payload shape is NOT confirmed, so it is
+    stored as-is (WebhookEvent) and only used to find the document; the real
+    state is then read from SignYu's GET /documents/{id}, whose shape is
+    confirmed. If that call fails, the scheduled `sync_documents` command
+    reconciles the document later.
     """
     try:
         payload = json.loads(request.body or "{}")
@@ -396,65 +279,30 @@ def signyu_webhook(request):
         return JsonResponse({"error": "unauthorized"}, status=401)
 
     event_type = payload.get("eventType") or payload.get("event_type") or payload.get("event") or ""
-    signyu_document_id = (
-        payload.get("documentId") or payload.get("document_id") or payload.get("documentID") or ""
-    )
+    signyu_document_id = payload.get("documentId") or payload.get("document_id") or payload.get("documentID") or ""
 
     event = WebhookEvent.objects.create(event_type=event_type, payload=payload)
 
-    document = None
-    if signyu_document_id:
-        document = Document.objects.filter(signyu_document_id=signyu_document_id).first()
-
+    document = Document.objects.filter(signyu_document_id=signyu_document_id).first() if signyu_document_id else None
     if not document:
         event.processing_note = "No matching document found for this event."
         event.save(update_fields=["processing_note"])
         return JsonResponse({"status": "received", "matched": False})
 
     event.document = document
-
-    signyu_signer_id = payload.get("signerId") or payload.get("signer_id") or ""
-    signer_status_raw = payload.get("signerStatus") or payload.get("status") or ""
-    doc_status_raw = payload.get("documentStatus") or payload.get("status") or ""
-
-    if signyu_signer_id:
-        signer = document.signers.filter(signyu_signer_id=signyu_signer_id).first()
-        mapped_signer_status = map_signer_status(signer_status_raw)
-        if signer and mapped_signer_status:
-            signer.status = mapped_signer_status
-            if mapped_signer_status == Signer.Status.SIGNED and not signer.signed_at:
-                signer.signed_at = timezone.now()
-            signer.save()
-            _log(document, f"{signer.name} status updated to {mapped_signer_status}")
-
-    mapped_doc_status = map_document_status(doc_status_raw)
-    if mapped_doc_status:
-        document.status = mapped_doc_status
-        document.signyu_raw_status = doc_status_raw
-        if mapped_doc_status == Document.Status.COMPLETED and not document.completed_at:
-            document.completed_at = timezone.now()
-            _log(document, "Document completed")
-        document.save()
-    elif document.signers.exists() and document.signers.filter(status=Signer.Status.SIGNED).count() == document.signers.count():
-        # Fallback: if every signer is SIGNED but SignYu didn't send an
-        # explicit document-level COMPLETED status in this event, mark it
-        # completed ourselves. Remove this if SignYu is confirmed to always
-        # send an explicit document status.
-        document.status = Document.Status.COMPLETED
-        document.completed_at = timezone.now()
-        document.save()
-        _log(document, "Document completed")
-
-    event.processed = True
-    event.save(update_fields=["processed", "document"])
+    try:
+        sync_document(document, source="via SignYu webhook")
+        event.processed = True
+    except SignYuAPIError:
+        logger.exception("Sync after SignYu webhook failed for %s", document.id)
+        event.processing_note = "Could not read the document state from SignYu; the scheduled sync will retry."
+    event.save(update_fields=["processed", "document", "processing_note"])
     return JsonResponse({"status": "received", "matched": True})
 
 
 def settings_webhook_secret_mismatch(request) -> bool:
-    from django.conf import settings
-
     secret = settings.SIGNYU_WEBHOOK_SECRET
     if not secret:
-        return False  # no secret configured - accept (unconfirmed mechanism, see Section 23)
+        return False  # no secret configured - accepted (SignYu's HMAC header is not confirmed yet)
     provided = request.headers.get("X-Signyu-Secret", "")
     return provided != secret

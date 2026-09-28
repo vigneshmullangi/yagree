@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import api, views
 
 app_name = "documents"
 
@@ -14,4 +14,9 @@ urlpatterns = [
     path("documents/<uuid:pk>/download/", views.download_document, name="download_document"),
     path("documents/<uuid:pk>/sync/", views.sync_status, name="sync_status"),
     path("api/webhooks/signyu/", views.signyu_webhook, name="signyu_webhook"),
+    # Public API v1 (server-to-server, X-API-Key header) - see API.md
+    path("api/v1/ping/", api.ping, name="api_ping"),
+    path("api/v1/documents/", api.documents_collection, name="api_documents"),
+    path("api/v1/documents/<uuid:pk>/", api.document_item, name="api_document"),
+    path("api/v1/documents/<uuid:pk>/download/", api.document_download, name="api_document_download"),
 ]
