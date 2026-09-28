@@ -4,15 +4,39 @@ Django settings for the Yagree project.
 import os
 from pathlib import Path
 
+import dj_database_url
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.getenv("SECRET_KEY", "insecure-dev-key-change-me")
-DEBUG = os.getenv("DEBUG", "True") == "True"
-ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",") if h.strip()]
-ALLOWED_HOSTS = ["192.168.0.100", "localhost", "127.0.0.1"]
+# Defaults to False for safety. Put DEBUG=True in your local .env only.
+DEBUG = os.getenv("DEBUG", "False") == "True"
+
+# ---------------------------------------------------------------------------
+# Hosts / CSRF
+# ---------------------------------------------------------------------------
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+    if h.strip()
+]
+CSRF_TRUSTED_ORIGINS = [
+    o.strip()
+    for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if o.strip()
+]
+
+# Render automatically provides this variable (e.g. yagree.onrender.com)
+RENDER_EXTERNAL_HOSTNAME = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+if RENDER_EXTERNAL_HOSTNAME:
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
+    CSRF_TRUSTED_ORIGINS.append(f"https://{RENDER_EXTERNAL_HOSTNAME}")
+
+# Render terminates HTTPS at its proxy; this makes Django build https:// links
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 
 INSTALLED_APPS = [
@@ -28,6 +52,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -56,19 +81,32 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": os.getenv("DB_NAME", "yagree"),
-        "USER": os.getenv("DB_USER", "root"),
-        "PASSWORD": os.getenv("DB_PASSWORD", ""),
-        "HOST": os.getenv("DB_HOST", "127.0.0.1"),
-        "PORT": os.getenv("DB_PORT", "3307"),
-        "OPTIONS": {
-            "charset": "utf8mb4",
-        },
+# ---------------------------------------------------------------------------
+# Database
+# On Render: DATABASE_URL is set -> Postgres.
+# Locally: no DATABASE_URL -> falls back to your XAMPP MySQL.
+# ---------------------------------------------------------------------------
+if os.getenv("DATABASE_URL"):
+    DATABASES = {
+        "default": dj_database_url.config(
+            default=os.getenv("DATABASE_URL"),
+            conn_max_age=600,
+        )
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.mysql",
+            "NAME": os.getenv("DB_NAME", "yagree"),
+            "USER": os.getenv("DB_USER", "root"),
+            "PASSWORD": os.getenv("DB_PASSWORD", ""),
+            "HOST": os.getenv("DB_HOST", "127.0.0.1"),
+            "PORT": os.getenv("DB_PORT", "3307"),
+            "OPTIONS": {
+                "charset": "utf8mb4",
+            },
+        }
+    }
 
 AUTH_USER_MODEL = "accounts.User"
 
@@ -88,7 +126,7 @@ STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-MEDIA_URL = "media/"
+MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
